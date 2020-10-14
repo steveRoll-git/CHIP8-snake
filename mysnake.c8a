@@ -1,0 +1,313 @@
+;V0 and V1 are reserved for reading and writing body positions to memory
+
+#define headX V2
+#define headY V3
+#define moveDir V4
+#define length V5 ; excluding the head
+
+#define bodyPtr V6 ; offset from bodyPosStart
+bodyPosStart = $4ff
+
+; body positions are stored from bodyPtr to bodyPtr+length
+; they are stored in x-y format, one after the other
+; the position currently under bodyPtr is the snake's head
+; all positions after that are the rest of the body
+; as the snake moves, bodyPtr is *subtracted* by 1, the head position is stored, and the last body position is removed
+; we depend on overflow and underflow to keep the body memory between bodyPosStart and bodyPosStart+255
+; this is much faster than moving all the body pieces, like you would on a normal computer
+; (this means that the maximum length can be 128)
+
+#define foodX V7
+#define foodY V8
+
+#define gotFood V9
+
+#define tickLength VA
+
+playspaceX = 16
+
+#define scoreDigitX V3
+#define scoreDigitY V4
+scoreBCD = $500
+
+#define _1 VC
+ld _1, 1
+
+#define _2 VD
+ld _2, 2
+
+#define _temp VE
+
+initLength = 3
+
+harder1 = 13
+harder2 = 23
+
+gameStart:
+
+cls
+
+ld headX, 32
+ld headY, 16
+
+ld length, initLength
+
+ld moveDir, 0
+
+;draw walls
+ld I, block
+
+#define wallX V0
+#define wallY V1
+
+ld _temp, 8
+
+ld wallX, 0
+ld wallY, 0
+call drawHalfWall
+
+ld wallX, 48
+ld wallY, 0
+call drawHalfWall
+
+jp wallsDone
+
+drawHalfWall:
+  drw wallX, wallY, 15
+  add wallX, 8
+  drw wallX, wallY, 15
+  sub wallX, _temp
+  add wallY, 15
+  drw wallX, wallY, 15
+  add wallX, 8
+  drw wallX, wallY, 15
+  sub wallX, _temp
+  add wallY, 15
+  drw wallX, wallY, 2
+  add wallX, 8
+  drw wallX, wallY, 2
+ret
+
+wallsDone:
+
+;store and draw initial body positions
+ld V0, headX
+ld V1, headY
+
+#define counter VE
+ld counter, 0
+
+ld bodyPtr, 0
+
+initBodyLoop:
+  ld I, bodyPosStart
+  add I, bodyPtr
+  ld [I], V1 ; store the position
+  ld I, pixel
+  drw V0, V1, 1 ; draw the position
+  sub V0, _1
+  add counter, 1
+  add bodyPtr, 2
+  se counter, initLength
+  jp initBodyLoop
+
+ld bodyPtr, 0
+
+call spawnFood
+ld I, pixel
+drw foodX, foodY, 1
+
+ld tickLength, 3
+
+mainLoop:
+  
+  ; right
+  sne moveDir, 16
+  jp dirDown
+  ld _temp, 6
+  sknp _temp
+  ld moveDir, 0
+  
+  ; down
+  dirDown:
+  sne moveDir, 24
+  jp dirLeft
+  ld _temp, 8
+  sknp _temp
+  ld moveDir, 8
+  
+  ; left
+  dirLeft:
+  sne moveDir, 0
+  jp dirUp
+  ld _temp, 4
+  sknp _temp
+  ld moveDir, 16
+  
+  ; up
+  dirUp:
+  sne moveDir, 8
+  jp okWhatever
+  ld _temp, 2
+  sknp _temp
+  ld moveDir, 24
+  
+  okWhatever:
+  ld V0, moveDir
+  jp moveInstructions + V0
+  
+moveInstructions:
+
+  sne headX, 63 ; check right wall
+  jp gameOver
+  add headX, 1 ; move right
+  jp moveEnd
+  
+  sne headY, 31 ; check down wall
+  jp gameOver
+  add headY, 1 ; move down
+  jp moveEnd
+  
+  sne headX, 0 ; check left wall
+  jp gameOver
+  sub headX, _1 ; move left
+  jp moveEnd
+  
+  sne headY, 0 ; check up wall
+  jp gameOver
+  sub headY, _1 ; move up
+  
+moveEnd:
+
+  ;hide food
+  ld I, pixel
+  drw foodX, foodY, 1
+  
+  ld gotFood, 0
+  
+  ;check if food is eaten
+  se headX, foodX
+  jp noFood
+  se headY, foodY
+  jp noFood
+  
+  ;got food
+  call undrawBodyLast
+  add length, 1
+  ld gotFood, 1
+  ld _temp, 10
+  ld ST, _temp
+  call spawnFood
+  
+  ;increase difficulty
+  sne length, harder1
+  jp increaseDifficulty
+  sne length, harder2
+  jp increaseDifficulty
+  
+  jp noFood
+  
+  increaseDifficulty:
+  sub tickLength, _1
+  
+noFood:
+
+  sub bodyPtr, _2
+  
+  ; store head position
+  ld I, bodyPosStart
+  add I, bodyPtr
+  ld V0, headX
+  ld V1, headY
+  ld [I], V1
+  
+  ;se gotFood, 0
+  ;jp noUndraw
+  ; undraw last body position
+  call undrawBodyLast
+  
+  ;draw head
+  drw headX, headY, 1 
+  
+  ;lose if head touches body
+  sne VF, 1
+  jp gameOver
+  
+  ;show food
+  drw foodX, foodY, 1
+  
+  ld DT, tickLength
+  call waitDT
+  
+  jp mainLoop
+
+spawnFood:
+  rnd foodX, $1F
+  add foodX, playspaceX
+  rnd foodY, $1F
+ret
+
+undrawBodyLast:
+  ld _temp, length
+  add _temp, _temp
+  add _temp, bodyPtr
+  ld I, bodyPosStart
+  add I, _temp ; set I to the last body position
+  ld V1, [I]
+  ld I, pixel
+  drw V0, V1, 1
+ret
+
+gameOver:
+  ld _temp, 30
+  ld ST, _temp
+
+  ; wait 1 second
+  ld _temp, 60
+  ld DT, _temp
+  call waitDT
+  
+  cls
+  
+  ; subtract initLength from length to only show collected food
+  ld _temp, initLength
+  sub length, _temp
+  
+  ; store BCD of score in V0, V1, V2
+  ld I, scoreBCD
+  bcd length
+  ld V2, [I]
+  
+  ld scoreDigitX, 24
+  ld scoreDigitY, 13
+  
+  ; draw hundreds digit
+  hex V0
+  drw scoreDigitX, scoreDigitY, 5
+  ; draw tens digit
+  add scoreDigitX, 5
+  hex V1
+  drw scoreDigitX, scoreDigitY, 5
+  ; draw ones digit
+  add scoreDigitX, 5
+  hex V2
+  drw scoreDigitX, scoreDigitY, 5
+  
+  ld _temp, $f
+  jp end
+
+waitDT:
+  ld VE, DT
+  se VE, 0
+  jp waitDT
+ret
+
+end:
+  skp _temp
+  jp end
+  jp gameStart
+
+pixel:
+  .byte $80
+block:
+  .byte $ff, $ff, $ff, $ff, $ff, $ff, $ff, $ff, $ff, $ff, $ff, $ff, $ff, $ff, $ff
